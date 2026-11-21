@@ -1,11 +1,16 @@
-import os, sys, unittest
+import datetime, os, sys, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from hhsalud import engine as eng
 from hhsalud.engine import Engine, ActionError
 from hhsalud.seed import seed_state, DEMO_PASSWORDS
 
+# Reloj fijo para pruebas: martes a las 06:30 (antes de abrir)
+eng.set_clock("2026-11-24T06:30:00")
+TODAY = "2026-11-24"
+
 
 def engine():
-    e = Engine(seed_state())
+    e = Engine(seed_state(datetime.date(2026, 11, 24)))
     e.ensure_passwords(DEMO_PASSWORDS)
     return e
 
@@ -72,7 +77,7 @@ class TestReglasClinicas(unittest.TestCase):
         r, enf, med = uid(e, "recepcion"), uid(e, "enfermeria"), uid(e, "medico")
         e.do(r, "new_patient", {"name": "Ana Particular", "age": 30, "consent_data": True})
         e.do(r, "book", {"pid": e.s["patients"][-1]["id"], "time": "12:40", "reason": "Control", "service": "S-CON"})
-        v = e.s["visits"][-1]
+        v = e.visit("V%d" % e.s["seq"]["visit"])
         with self.assertRaises(ActionError):
             e.do(enf, "triage", {"vid": v["id"], "pa": "120/80"})  # aún no llega
         e.do(r, "arrive", {"vid": v["id"]})
@@ -89,7 +94,7 @@ class TestReglasClinicas(unittest.TestCase):
         e = engine()
         r, enf, med = uid(e, "recepcion"), uid(e, "enfermeria"), uid(e, "medico")
         e.do(r, "book", {"pid": "P-2210", "time": "12:20", "service": "S-CON"})
-        v = e.s["visits"][-1]
+        v = e.visit("V%d" % e.s["seq"]["visit"])
         e.do(r, "arrive", {"vid": v["id"]})
         e.do(enf, "triage", {"vid": v["id"], "pa": "130/85"})
         e.do(med, "sign", {"vid": v["id"], "note": "Control", "dx": "I10"})
@@ -108,7 +113,7 @@ class TestReglasClinicas(unittest.TestCase):
         med = uid(e, "medico")
         p = next(x for x in e.s["patients"] if x["allergy"])
         e.do(uid(e, "recepcion"), "book", {"pid": p["id"], "time": "12:40", "reason": "Dolor", "service": "S-CON"})
-        v = e.s["visits"][-1]
+        v = e.visit("V%d" % e.s["seq"]["visit"])
         d = next(x for x in e.s["drugs"] if x["group"] and x["group"].lower() in p["allergy"].lower())
         with self.assertRaises(ActionError):
             e.do(med, "rx", {"vid": v["id"], "drug": d["id"]})
@@ -117,6 +122,62 @@ class TestReglasClinicas(unittest.TestCase):
         e = engine()
         with self.assertRaises(ActionError):
             e.do(uid(e, "recepcion"), "new_patient", {"name": "Ana", "age": 30})
+
+
+class TestAgendaReal(unittest.TestCase):
+    def test_cada_paciente_ve_solo_lo_suyo(self):
+        e = engine()
+        for user, pid in (("paciente", "P-2210"), ("juan.mejia", "P-1874"), ("rosanna.feliz", "P-2305")):
+            u = e.login(user, "demo123")
+            st = e.public_state(u["id"])
+            self.assertEqual([p["id"] for p in st["patients"]], [pid])
+            self.assertTrue(all(v["pid"] == pid for v in st["visits"]))
+
+    def test_no_se_agenda_en_el_pasado_ni_en_horario_ocupado(self):
+        e = engine()
+        r = uid(e, "recepcion")
+        eng.set_clock(TODAY + "T10:05:00")
+        try:
+            with self.assertRaises(ActionError):
+                e.do(r, "book", {"pid": "P-2210", "date": TODAY, "time": "09:00"})
+            e.do(r, "book", {"pid": "P-2210", "date": TODAY, "time": "10:12"})
+            with self.assertRaises(ActionError):
+                e.do(r, "book", {"pid": "P-1559", "date": TODAY, "time": "10:12"})
+            self.assertNotIn("10:12", e.free_slots(TODAY, "C2"))
+            self.assertTrue(all(t > "10:05" for t in e.free_slots(TODAY, "C2")))
+        finally:
+            eng.set_clock("2026-11-24T06:30:00")
+
+    def test_domingo_y_fuera_de_horario(self):
+        e = engine()
+        r = uid(e, "recepcion")
+        with self.assertRaises(ActionError):
+            e.do(r, "book", {"pid": "P-2305", "date": "2026-11-29", "time": "09:00"})  # domingo
+        with self.assertRaises(ActionError):
+            e.do(r, "book", {"pid": "P-2305", "date": "2026-11-25", "time": "20:00"})
+
+    def test_cancelar_libera_el_horario_y_llegada_solo_el_dia(self):
+        e = engine()
+        pac = uid(e, "paciente")
+        e.do(pac, "book", {"date": "2026-11-26", "time": "09:00"})
+        v = e.visit("V%d" % e.s["seq"]["visit"])
+        with self.assertRaises(ActionError):
+            e.do(uid(e, "recepcion"), "arrive", {"vid": v["id"]})
+        e.do(pac, "cancel", {"vid": v["id"]})
+        self.assertEqual(v["st"], "cancelada")
+        self.assertIn("09:00", e.free_slots("2026-11-26", "C2"))
+
+    def test_paciente_nuevo_con_acceso(self):
+        e = engine()
+        e.do(uid(e, "recepcion"), "new_patient", {"name": "Ana Rosario", "consent_data": True, "username": "ana.rosario", "password": "clave12"})
+        u = e.login("ana.rosario", "clave12")
+        st = e.public_state(u["id"])
+        self.assertEqual(st["patients"][0]["name"], "Ana Rosario")
+
+    def test_datos_antiguos_se_reemplazan(self):
+        s, replaced = eng.upgrade({"version": 1}, seed_state)
+        self.assertTrue(replaced)
+        self.assertEqual(s["version"], eng.SCHEMA)
 
 
 if __name__ == "__main__":

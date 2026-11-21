@@ -4,10 +4,74 @@ Es Python puro (solo biblioteca estándar). Lo usa el servidor Flask en el PC lo
 y Pyodide en el navegador para la demostración en GitHub Pages.
 """
 import copy
+import datetime as _dt
 import hashlib
 import hmac
 import os
-import time
+import re
+
+SCHEMA = 2          # versión del formato de datos; una versión menor se reemplaza por la demo nueva
+ACTIVE = ("agendado", "en espera", "triaje")
+
+# ------------------------------------------------------------ reloj
+# En el servidor local se usa la hora del PC. En el navegador (Pyodide) la interfaz envía
+# la fecha y hora local del visitante en cada llamada, porque Pyodide trabaja en UTC.
+CLOCK = None
+
+
+def set_clock(iso):
+    global CLOCK
+    CLOCK = _dt.datetime.fromisoformat(iso) if iso else None
+
+
+def now():
+    return CLOCK or _dt.datetime.now()
+
+
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+
+
+def d_label(d):
+    return f"{DIAS[d.weekday()]} {d.day} de {MESES[d.month - 1]} de {d.year}"
+
+
+def d_short(d):
+    return f"{DIAS[d.weekday()][:3].capitalize()} {d.day} {MESES[d.month - 1][:3]}"
+
+
+def d_parse(x):
+    if not isinstance(x, str) or not re.match(r"^\d{4}-\d{2}-\d{2}$", x):
+        raise ActionError("Fecha no válida.")
+    return _dt.date.fromisoformat(x)
+
+
+def add_business_days(d, n):
+    while n > 0:
+        d += _dt.timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def mins(t):
+    if not isinstance(t, str) or not re.match(r"^\d{2}:\d{2}$", t):
+        raise ActionError("Hora no válida (use HH:MM).")
+    h, m = int(t[:2]), int(t[3:])
+    if h > 23 or m > 59:
+        raise ActionError("Hora no válida (use HH:MM).")
+    return h * 60 + m
+
+
+def hhmm(n):
+    return "%02d:%02d" % (n // 60, n % 60)
+
+
+def upgrade(state, seed_fn):
+    """Devuelve (estado, reemplazado). Un estado de una versión anterior se reemplaza por la demo nueva."""
+    if not state or state.get("version", 1) < SCHEMA:
+        return seed_fn(now().date()), True
+    return state, False
 
 ROLES = {
     "admin": "Administración",
@@ -39,6 +103,7 @@ PERMS = {
     "new_patient": {"recepcion", "admin"},
     "claim": {"recepcion", "admin"},
     "claim_status": {"recepcion", "direccion", "admin"},
+    "cancel": {"paciente", "recepcion", "admin"},
     "ars_status": {"recepcion", "direccion", "admin"},
     "triage": {"enfermeria", "medico", "admin"},
     "open": {"medico", "enfermeria", "direccion", "admin"},
@@ -110,8 +175,7 @@ def check_pw(password, stored):
 
 
 def now_hms():
-    t = time.localtime()
-    return "%02d:%02d:%02d" % (t.tm_hour, t.tm_min, t.tm_sec)
+    return now().strftime("%d/%m %H:%M:%S")
 
 
 class Engine:
@@ -151,6 +215,57 @@ class Engine:
         n = self.s["seq"][kind]
         return f"{prefix}{str(n).zfill(width) if width else n}"
 
+    # ------------------------------------------------------------ agenda
+    def today(self):
+        return now().date()
+
+    def workdays(self):
+        return self.s["config"].get("workdays", [0, 1, 2, 3, 4, 5])
+
+    def open_days(self, n=6):
+        """Próximos n días de atención, empezando hoy si aún queda horario."""
+        c = self.s["config"]
+        d, out = self.today(), []
+        if d.weekday() not in self.workdays() or now().hour * 60 + now().minute >= mins(c.get("close", "19:00")) - int(c["slot_minutes"]):
+            d += _dt.timedelta(days=1)
+        while len(out) < n:
+            if d.weekday() in self.workdays():
+                out.append(d)
+            d += _dt.timedelta(days=1)
+        return out
+
+    def busy(self, date, room):
+        return {v["time"] for v in self.s["visits"] if v.get("date") == date and v.get("room") == room and v["st"] != "cancelada"}
+
+    def free_slots(self, date, room):
+        c = self.s["config"]
+        step = int(c["slot_minutes"])
+        start, end = mins(c.get("open", "07:00")), mins(c.get("close", "19:00"))
+        taken = self.busy(date, room)
+        limit = now().hour * 60 + now().minute if date == self.today().isoformat() else -1
+        return [hhmm(t) for t in range(start, end - step + 1, step) if hhmm(t) not in taken and t > limit]
+
+    def check_slot(self, date_s, time_, room, pid=None):
+        d = d_parse(date_s)
+        c = self.s["config"]
+        t = mins(time_)
+        if d < self.today():
+            raise ActionError("No se puede agendar en una fecha pasada.")
+        if d.weekday() not in self.workdays():
+            raise ActionError("El centro no atiende ese día.")
+        if not mins(c.get("open", "07:00")) <= t <= mins(c.get("close", "19:00")) - int(c["slot_minutes"]):
+            raise ActionError(f"Fuera del horario de atención ({c.get('open', '07:00')}–{c.get('close', '19:00')}).")
+        if d == self.today() and t <= now().hour * 60 + now().minute:
+            raise ActionError("Esa hora ya pasó. Elija una hora posterior.")
+        if time_ in self.busy(date_s, room):
+            raise ActionError("Ese horario ya está ocupado. Elija otro.")
+        if pid and any(v["pid"] == pid and v.get("date") == date_s and v["st"] in ACTIVE for v in self.s["visits"]):
+            raise ActionError("El paciente ya tiene una cita ese día.")
+        return d
+
+    def sort_visits(self):
+        self.s["visits"].sort(key=lambda v: (v.get("date", ""), v["time"]))
+
     def ensure_passwords(self, defaults):
         """Asigna contraseñas iniciales a usuarios sin contraseña."""
         for u in self.s["users"]:
@@ -183,6 +298,14 @@ class Engine:
             st["notifications"] = []
             st["ars_claims"] = []
             st["users"] = [x for x in st["users"] if x["role"] == "medico"]
+        days = self.open_days(6)
+        rooms = [r["id"] for r in self.s["rooms"] if r.get("doctor") and r.get("active")]
+        if u and u["role"] == "paciente":
+            pat = self._find("patients", "id", u.get("patient"))
+            rooms = [self._doctor_room(pat.get("doctor"))] if pat else []
+        st["now"] = {"date": self.today().isoformat(), "time": now().strftime("%H:%M"), "label": d_label(self.today())}
+        st["days"] = [{"date": d.isoformat(), "short": d_short(d), "label": d_label(d)} for d in days]
+        st["agenda"] = {d.isoformat(): {r: self.free_slots(d.isoformat(), r) for r in rooms} for d in days}
         st["me"] = self.public_user(u) if u else None
         st["roles"] = ROLES
         if u and u["role"] != "paciente":
@@ -214,23 +337,34 @@ class Engine:
         time_ = p.get("time")
         if not time_:
             raise ActionError("Elija una hora.")
-        if any(v["pid"] == pid and v["st"] in ("agendado", "en espera", "triaje") for v in self.s["visits"]):
-            raise ActionError("Ya tiene una cita activa.")
-        if any(v["time"] == time_ for v in self.s["visits"]):
-            raise ActionError("Ese horario ya está ocupado. Elija otro.")
-        svc = p.get("service") or "S-CON"
-        vid = self.next_id("visit", "V")
+        date_s = p.get("date") or self.today().isoformat()
         room = self._doctor_room(pat.get("doctor"))
-        self.s["visits"].append({"id": vid, "pid": pid, "time": time_, "reason": p.get("reason") or "Consulta",
+        d = self.check_slot(date_s, time_, room, pid)
+        svc = p.get("service") or "S-CON"
+        if not self.service(svc).get("active", True):
+            raise ActionError("Ese servicio no está disponible.")
+        vid = self.next_id("visit", "V")
+        self.s["visits"].append({"id": vid, "pid": pid, "date": date_s, "time": time_, "reason": (p.get("reason") or "Consulta").strip(),
                                  "service": svc, "st": "agendado", "paid": False, "ecf": None, "vitals": None, "dx": None,
                                  "note": "", "consent": False, "room": room, "source": "app" if u["role"] == "paciente" else "recepcion"})
-        self.s["visits"].sort(key=lambda v: v["time"])
+        self.sort_visits()
         price = self.service(svc)["price"]
-        self.log(u["name"], f"agendó cita {p.get('day', '')} {time_}".replace("  ", " "), pid)
+        self.log(u["name"], f"agendó cita para el {d_short(d)} a las {time_}", pid)
         rem = " Recordatorios programados 24 h y 2 h antes." if pat.get("consent_reminders") else ""
         cov = self.coverage(pat, self.service(svc))
         cop = f" Con su ARS paga un copago estimado de {self.money(price - cov[1])}." if cov else ""
-        return f"Cita confirmada a las {time_}. Precio informado: {self.money(price)}.{cop}{rem}"
+        cuando = "hoy" if d == self.today() else f"el {d_label(d)}"
+        return f"Cita confirmada {cuando} a las {time_}. Precio informado: {self.money(price)}.{cop}{rem}"
+
+    def a_cancel(self, u, p):
+        v = self.visit(p.get("vid"))
+        if u["role"] == "paciente" and v["pid"] != u.get("patient"):
+            raise ActionError("Esa cita no es suya.")
+        if v["st"] != "agendado":
+            raise ActionError("Solo se cancela una cita que aún no ha llegado.")
+        v["st"] = "cancelada"
+        self.log(u["name"], f"canceló la cita del {v.get('date')} {v['time']}", v["id"])
+        return "Cita cancelada. El horario quedó libre."
 
     def coverage(self, pat, svc):
         """Devuelve (ars, monto que cubre la ARS) o None si se paga como particular."""
@@ -251,7 +385,7 @@ class Engine:
         if len(parts) != 2 or not all(x.isdigit() and 2 <= len(x) <= 3 for x in parts):
             raise ActionError("Escriba la presión como 128/82.")
         pat = self.patient(u.get("patient") or p.get("pid"))
-        pat.setdefault("bp", []).insert(0, ["16 nov", val])
+        pat.setdefault("bp", []).insert(0, [d_short(self.today()).split(" ", 1)[1] + " " + now().strftime("%H:%M"), val])
         self.log(u["name"], "registró presión arterial en casa", pat["id"])
         return "Presión guardada. Su médica la verá en su expediente."
 
@@ -264,7 +398,9 @@ class Engine:
         self.patient(pid)
         rid = self.next_id("datareq", "SD-", 3)
         kind = p.get("kind") or "Acceso a mis datos"
-        self.s["data_requests"].append({"id": rid, "pid": pid, "kind": kind, "due": "5 días hábiles" if kind.startswith("Acceso") else "10 días hábiles", "status": "Recibida"})
+        n = 5 if kind.startswith("Acceso") else 10
+        due = add_business_days(self.today(), n)
+        self.s["data_requests"].append({"id": rid, "pid": pid, "kind": kind, "due": f"{due.strftime('%d/%m/%Y')} ({n} días hábiles)", "status": "Recibida"})
         self.log(u["name"], "solicitud de " + kind.lower(), pid)
         return f"Solicitud {rid} registrada. Plazo de respuesta: {self.s['data_requests'][-1]['due']} (Ley 172-13)."
 
@@ -273,6 +409,8 @@ class Engine:
         v = self.visit(p.get("vid"))
         if v["st"] != "agendado":
             raise ActionError("La llegada ya fue registrada.")
+        if v.get("date") != self.today().isoformat():
+            raise ActionError("La llegada solo se registra el día de la cita.")
         v["st"] = "en espera"
         pat = self.patient(v["pid"])
         cov = self.coverage(pat, self.service(v["service"]))
@@ -313,7 +451,7 @@ class Engine:
         v["ars_amount"] = ars_amount
         v["copay"] = round(price - ars_amount, 2)
         v["ecf"] = (f"e-CF tipo 32 · Factura de consumo electrónica · Ambiente: pruebas\ne-NCF: E32{str(n).zfill(10)}\n"
-                    f"Código de seguridad: {format(n * 7919 % 999983, 'X').zfill(6)}\nCliente: {pat['name']}\n" + "\n".join(lines) +
+                    f"Fecha de emisión: {now().strftime('%d/%m/%Y %H:%M')}\nCódigo de seguridad: {format(n * 7919 % 999983, 'X').zfill(6)}\nCliente: {pat['name']}\n" + "\n".join(lines) +
                     f"\nForma de pago: {p.get('method') or 'Tarjeta'}")
         self.log(u["name"], "emitió e-CF" + (" y registró reclamación a la ARS" if cov else ""), v["id"])
         extra = f" Reclamación a la ARS por {self.money(ars_amount)} registrada." if cov else ""
@@ -334,27 +472,45 @@ class Engine:
             raise ActionError("Indique el nombre completo.")
         if not p.get("consent_data"):
             raise ActionError("Sin consentimiento para tratar datos de salud no se puede abrir el expediente.")
-        pid = self.next_id("patient", "P-")
         doctor = p.get("doctor") or "U-MED"
+        username = (p.get("username") or "").strip().lower()
+        if username:
+            if not username.replace(".", "").replace("_", "").isalnum():
+                raise ActionError("Usuario no válido: use letras, números, punto o guion bajo.")
+            if self._find("users", "username", username):
+                raise ActionError("Ese nombre de usuario ya existe.")
+            if len(p.get("password") or "") < 6:
+                raise ActionError("La contraseña de la app debe tener al menos 6 caracteres.")
+        room = self._doctor_room(doctor)
+        today = self.today().isoformat()
+        if p.get("time"):
+            self.check_slot(today, p["time"], room)
+        pid = self.next_id("patient", "P-")
         self.s["patients"].append({"id": pid, "name": name, "age": int(p.get("age") or 0), "doc": p.get("doc") or "Ficticio", "ars": p.get("ars") or "", "nss": p.get("nss") or "",
                                    "allergy": p.get("allergy") or "", "chronic": [], "doctor": doctor,
                                    "consent_data": True, "consent_reminders": bool(p.get("consent_reminders")),
                                    "consent_promo": bool(p.get("consent_promo")), "bp": []})
         self.log(u["name"], "abrió expediente nuevo y registró consentimiento", pid)
+        extra = ""
+        if username:
+            uid = self.next_id("user", "U-", 3)
+            self.s["users"].append({"id": uid, "username": username, "name": name, "role": "paciente", "active": True, "pw": hash_pw(p["password"]), "patient": pid})
+            self.log(u["name"], f"creó acceso a la app para {username}", pid)
+            extra = f" Acceso a la app: usuario «{username}»."
         if p.get("time"):
             vid = self.next_id("visit", "V")
-            self.s["visits"].append({"id": vid, "pid": pid, "time": p["time"], "reason": "Primera consulta", "service": "S-CON",
+            self.s["visits"].append({"id": vid, "pid": pid, "date": today, "time": p["time"], "reason": "Primera consulta", "service": "S-CON",
                                      "st": "en espera", "paid": False, "ecf": None, "vitals": None, "dx": None, "note": "",
-                                     "consent": False, "room": self._doctor_room(doctor), "source": "recepcion"})
-            self.s["visits"].sort(key=lambda v: v["time"])
-        return f"Paciente {pid} inscrito y asignado a su médico de cabecera."
+                                     "consent": False, "room": room, "source": "recepcion"})
+            self.sort_visits()
+        return f"Paciente {pid} inscrito y asignado a su médico de cabecera.{extra}"
 
     def a_claim(self, u, p):
         text = (p.get("text") or "").strip()
         if not text:
             raise ActionError("Describa la queja.")
         cid = self.next_id("claim", "Q-", 3)
-        self.s["claims"].append({"id": cid, "type": p.get("type") or "Queja", "text": text, "due": "5 días hábiles (plazo interno)", "status": "Recibida"})
+        self.s["claims"].append({"id": cid, "type": p.get("type") or "Queja", "text": text, "due": add_business_days(self.today(), 5).strftime("%d/%m/%Y") + " (5 días hábiles)", "status": "Recibida"})
         self.log(u["name"], "registró queja", cid)
         return f"Queja {cid} registrada. Respuesta escrita en 5 días hábiles."
 
@@ -455,9 +611,16 @@ class Engine:
     # ---- administración
     def a_cfg(self, u, p):
         c = self.s["config"]
-        for k in ("center", "address", "day", "currency"):
+        for k in ("center", "address", "currency"):
             if k in p:
                 c[k] = str(p[k]).strip() or c[k]
+        if "open" in p or "close" in p:
+            o, cl = p.get("open", c.get("open", "07:00")), p.get("close", c.get("close", "19:00"))
+            if mins(o) >= mins(cl):
+                raise ActionError("La hora de apertura debe ser anterior a la de cierre.")
+            c["open"], c["close"] = o, cl
+        if "saturday" in p:
+            c["workdays"] = [0, 1, 2, 3, 4] + ([5] if p["saturday"] else [])
         for k in ("slot_minutes", "weekly_capacity"):
             if k in p:
                 c[k] = max(1, int(p[k]))
@@ -647,7 +810,7 @@ class Engine:
 
     def kpis(self):
         cfg = self.s["config"]
-        attended = sum(1 for v in self.s["visits"] if v["st"] == "atendido")
+        attended = sum(1 for v in self.s["visits"] if v["st"] == "atendido" and v.get("date") == self.today().isoformat())
         paid = [v for v in self.s["visits"] if v["paid"]]
         week = self.s["week_cons"][-1] + attended
         return {

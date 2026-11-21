@@ -9,6 +9,15 @@ Toda la lógica (reglas clínicas, permisos, cobertura ARS y copago, e-CF, bitá
 | **Servidor local** | Su PC, con `python app.py` (Flask) | Base SQLite en `instance/hhsalud.db` |
 | **Demostración web** | GitHub Pages, sin servidor: el motor Python corre en el navegador con Pyodide | Solo en el navegador de quien la abre |
 
+## Agenda en tiempo real
+
+- La agenda usa la **fecha y hora actuales** (en la demostración web, la hora local de quien la abre).
+- Horario y días de atención configurables en **Administración › Centro** (por defecto 07:00–19:00, lunes a sábado).
+- El paciente y Recepción ven solo **horas libres** de los próximos 6 días de atención; no se puede agendar en el pasado, fuera de horario ni en un horario ocupado.
+- Las citas se pueden **cancelar** (el horario queda libre); la llegada solo se registra el día de la cita.
+- Los plazos legales (derechos de datos, quejas) se calculan en **días hábiles** desde hoy.
+- Si se abre con datos de una versión anterior, se reemplazan automáticamente por la demo nueva (en el servidor, con copia de seguridad previa).
+
 ## Reglas dominicanas que aplica la demo
 
 - Identificación con **cédula**; afiliación a **ARS** con NSS.
@@ -49,7 +58,13 @@ Se abre el navegador en **http://127.0.0.1:5000**. Otro puerto: `PORT=8080 pytho
 | `medico` | Médico | `demo123` |
 | `enfermeria` | Enfermería | `demo123` |
 | `recepcion` | Recepción y caja | `demo123` |
-| `paciente` | Paciente | `demo123` |
+| `paciente` | Paciente · Carmen Altagracia Reyes | `demo123` |
+| `juan.mejia` | Paciente · Juan Bautista Mejía | `demo123` |
+| `rosanna.feliz` | Paciente · Rosanna Féliz | `demo123` |
+| `ramon.guzman` | Paciente · Ramón Antonio Guzmán | `demo123` |
+| `nicole.tutor` | Tutora de Nicole Pérez Santana (menor) | `demo123` |
+
+Cada paciente entra con su propio usuario y solo ve sus datos. Para dar acceso a otro paciente: **Administración › Pacientes › Crear acceso**, o al inscribirlo en **Recepción › Paciente nuevo** (usuario y contraseña de la app).
 
 > Cambie la contraseña de `admin` en **Administración › Usuarios › Contraseña** la primera vez que ingrese.
 
@@ -57,7 +72,7 @@ Se abre el navegador en **http://127.0.0.1:5000**. Otro puerto: `PORT=8080 pytho
 
 ## 2. Qué puede hacer el administrador
 
-- **Centro**: nombre, dirección, fecha mostrada, duración de la consulta, capacidad semanal, meta de ocupación, tasa de ITBIS y exención de servicios de salud.
+- **Centro**: nombre, dirección, horario de atención, sábados, duración de la consulta, capacidad semanal, meta de ocupación, tasa de ITBIS y exención de servicios de salud.
 - **Usuarios**: crear, editar perfil, asignar consultorio o paciente vinculado, activar o desactivar y cambiar contraseñas.
 - **Consultorios** y médico responsable.
 - **Servicios y precios** (RD$): procedimiento (exige consentimiento) y cobertura por ARS.

@@ -8,7 +8,9 @@
   let sel = null;          // atención seleccionada en clínica
   let ptab = "inicio";     // pestaña de la app del paciente
   let atab = "centro";     // pestaña de administración
-  let pick = { day: "Mar 17", time: null };
+  let pick = { day: null, time: null };
+  let viewPid = null;      // paciente que ve el personal en la vista del paciente
+  let recDay = null;       // día mostrado en recepción
   let payId = null;
   let edit = null;         // registro en edición (administración)
 
@@ -22,11 +24,34 @@
   const arsOf = (p) => (p && p.ars ? (S.ars || []).find((a) => a.id === p.ars) : null);
   const arsChip = (p) => { const a = arsOf(p); return a ? `<span class="chip ok">ARS: ${esc(a.name)}${p.nss ? " · NSS " + esc(p.nss) : ""}</span>` : '<span class="chip">Particular (sin ARS)</span>'; };
   const covOf = (p, s) => { const a = arsOf(p); return a && a.active && s.ars ? { a, amt: Math.round(s.price * a.coverage * 100) / 100 } : null; };
-  const stChip = (st) => ({ agendado: '<span class="chip">Agendado</span>', "en espera": '<span class="chip warn">En espera</span>', triaje: '<span class="chip acc">Triaje hecho</span>', atendido: '<span class="chip ok">Atendido</span>' }[st] || esc(st));
+  const ACTIVE = ["agendado", "en espera", "triaje"];
+  const cap = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
+  const greet = () => { const h = new Date().getHours(); return h < 12 ? "Buenos días" : h < 19 ? "Buenas tardes" : "Buenas noches"; };
+  const isToday = (v) => v.date === S.now.date;
+  const dayShort = (iso) => { const x = (S.days || []).find((d) => d.date === iso); if (x) return x.short;
+    const d = new Date(iso + "T12:00:00"); return d.toLocaleDateString("es-DO", { weekday: "short", day: "numeric", month: "short" }); };
+  const when = (v) => (isToday(v) ? "Hoy" : dayShort(v.date)) + " · " + v.time;
+  const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes(); };
+  const futureSlot = (date, t) => date !== S.now.date || (+t.slice(0, 2) * 60 + +t.slice(3)) > nowMin();
+  const roomOfDoctor = (doc) => (S.rooms.find((r) => r.doctor === doc) || { id: "C2" }).id;
+  const slotsFor = (date, room) => ((S.agenda[date] || {})[room] || []).filter((t) => futureSlot(date, t));
+  const relDate = (n) => { const d = new Date(S.now.date + "T12:00:00"); d.setDate(d.getDate() - n); return d.toLocaleDateString("es-DO", { day: "numeric", month: "short" }); };
+  const stChip = (st) => ({ agendado: '<span class="chip">Agendado</span>', "en espera": '<span class="chip warn">En espera</span>', triaje: '<span class="chip acc">Triaje hecho</span>', atendido: '<span class="chip ok">Atendido</span>', cancelada: '<span class="chip bad">Cancelada</span>' }[st] || esc(st));
 
   function toast(t, bad) { const el = $("#toast"); el.textContent = t; el.style.background = bad ? "var(--bad)" : ""; el.hidden = false; clearTimeout(toast._t); toast._t = setTimeout(() => (el.hidden = true), 4200); }
   function modal(html) { $("#mBody").innerHTML = html; $("#modal").hidden = false; const f = $("#mBody").querySelector("input,select,textarea,button"); f && f.focus(); }
   function closeModal() { $("#modal").hidden = true; }
+  function fillBookTimes() {
+    const sel = $("#bT"); if (!sel) return;
+    const p = pt(val("bP")), times = slotsFor(val("bD"), roomOfDoctor(p.doctor));
+    sel.innerHTML = times.map((t) => `<option>${t}</option>`).join("") || '<option value="">Sin horas libres</option>';
+  }
+  function fillNewTimes() {
+    const sel = $("#nTime"); if (!sel) return;
+    const times = S.days[0] && S.days[0].date === S.now.date ? slotsFor(S.now.date, roomOfDoctor(val("nDoc"))) : [];
+    sel.innerHTML = '<option value="">Sin cita hoy</option>' + times.map((t) => `<option>${t}</option>`).join("");
+  }
+  $("#mBody").addEventListener("change", (e) => { if (["bP", "bD"].includes(e.target.id)) fillBookTimes(); if (e.target.id === "nDoc") fillNewTimes(); });
   $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal" || e.target.closest("[data-close]")) closeModal(); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeModal(); });
 
@@ -52,8 +77,12 @@
         <tr><td class="mono">medico</td><td>Médico</td><td class="mono">demo123</td></tr>
         <tr><td class="mono">enfermeria</td><td>Enfermería</td><td class="mono">demo123</td></tr>
         <tr><td class="mono">recepcion</td><td>Recepción y caja</td><td class="mono">demo123</td></tr>
-        <tr><td class="mono">paciente</td><td>Paciente</td><td class="mono">demo123</td></tr></table>
-        <p class="sub" style="font-size:12px">El administrador puede cambiar estas contraseñas en Administración › Usuarios.</p></details></div>`;
+        <tr><td class="mono">paciente</td><td>Paciente · Carmen Altagracia Reyes</td><td class="mono">demo123</td></tr>
+        <tr><td class="mono">juan.mejia</td><td>Paciente · Juan Bautista Mejía</td><td class="mono">demo123</td></tr>
+        <tr><td class="mono">rosanna.feliz</td><td>Paciente · Rosanna Féliz</td><td class="mono">demo123</td></tr>
+        <tr><td class="mono">ramon.guzman</td><td>Paciente · Ramón Antonio Guzmán</td><td class="mono">demo123</td></tr>
+        <tr><td class="mono">nicole.tutor</td><td>Tutora · Nicole Pérez Santana</td><td class="mono">demo123</td></tr></table>
+        <p class="sub" style="font-size:12px">Cada paciente entra con su propio usuario y solo ve sus datos. El administrador crea accesos en Administración › Pacientes.</p></details></div>`;
     $("#lp").focus();
     $("#fLogin").addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -94,7 +123,7 @@
       ["recepcion", "Recepción y caja", "Llegada, validación de ARS, copago, e-CF y quejas."], ["clinica", "Médico y enfermería", "Triaje, expediente, consentimiento, receta, referencia y notificación."],
       ["direccion", "Dirección y red", "Ocupación, cumplimiento normativo y red de centros."], ["admin", "Administración", "Centro, usuarios, consultorios, servicios, catálogos, pacientes y datos."]]
       .filter((c) => S.me.views.includes(c[0]));
-    return `<div class="card" style="padding:22px"><h1>${esc(S.config.center)}</h1>
+    return `<div class="card" style="padding:22px"><div class="sub" >${esc(cap(S.now.label))} · horario ${esc(S.config.open)}–${esc(S.config.close)}</div><h1>${esc(S.config.center)}</h1>
       <p class="sub" style="margin:6px 0 0;max-width:760px">Recorrido del sistema tal como operará. Lo que hace cada perfil se refleja en los demás. Active «Ver procesos» para ver el procedimiento y la norma dominicana detrás de cada pantalla.</p></div>
       <div class="home-roles">${cards.map((c) => `<a class="card role-card" href="#${c[0]}"><h2>${c[1]}</h2><span class="sub">${c[2]}</span></a>`).join("")}</div>`;
   }
@@ -106,33 +135,43 @@
     result: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 3h6v4l4 9a3 3 0 0 1-2.7 4H7.7A3 3 0 0 1 5 16l4-9z"/><path d="M8 13h8"/></svg>',
     salud: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s-8-5-8-11a5 5 0 0 1 8-4 5 5 0 0 1 8 4c0 6-8 11-8 11z"/></svg>',
     datos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>' };
-  function myPatientId() { return S.me.role === "paciente" ? S.me.patient : "P-1042"; }
+  function myPatientId() {
+    if (S.me.role === "paciente") return S.me.patient;
+    if (!viewPid || !S.patients.find((x) => x.id === viewPid)) viewPid = (S.patients[0] || {}).id;
+    return viewPid;
+  }
   function vPaciente() {
     const pid = myPatientId(), p = pt(pid), doc = userName(p.doctor);
-    const b = S.visits.filter((v) => v.pid === pid && v.st !== "atendido").slice(-1)[0];
+    const upcoming = S.visits.filter((v) => v.pid === pid && ACTIVE.includes(v.st) && (v.date > S.now.date || (isToday(v) && (v.st !== "agendado" || futureSlot(v.date, v.time)))))
+      .sort((a, c) => (a.date + a.time).localeCompare(c.date + c.time));
+    const b = upcoming[0];
     const tabs = [["inicio", "Inicio"], ["citas", "Citas"], ["result", "Resultados"], ["salud", "Mi salud"], ["datos", "Mis datos"]];
     let h = "";
     if (ptab === "inicio") {
       h = `<div class="card nextcard"><div class="row between"><span style="font-size:11.5px;letter-spacing:.08em;text-transform:uppercase">Próxima cita</span>${prc("PRC-SEG-02", "Recordatorio de control")}</div>
-        ${b ? `<p style="margin:6px 0 0;font-family:var(--f-d);font-size:20px;font-weight:600">Hoy · ${b.time}</p><p class="sub" style="margin:2px 0 0">Su médico: ${esc(doc)} · ${esc(b.reason)}</p><div class="row" style="margin-top:8px">${stChip(b.st)}</div>`
+        ${b ? `<p style="margin:6px 0 0;font-family:var(--f-d);font-size:20px;font-weight:600">${when(b)}</p><p class="sub" style="margin:2px 0 0">Su médico: ${esc(doc)} · ${esc(b.reason)}</p><div class="row" style="margin-top:8px">${stChip(b.st)}</div>`
           : `<p class="sub" style="margin:6px 0 8px">No tiene citas programadas.</p><button class="btn pri" type="button" data-pt="citas">Agendar cita</button>`}</div>
         ${arsOf(p) ? `<div class="ars"><span>Mi ARS: <b>${esc(arsOf(p).name)}</b></span><span>NSS ${esc(p.nss || "—")}</span></div>` : '<div class="ars"><span>Atención como particular</span><span>Puede registrar su ARS en recepción</span></div>'}
         <div class="card" style="background:var(--soft);border-color:transparent"><h3>Registre su presión</h3>
         <div class="row" style="margin-top:8px"><input type="text" id="bpIn" aria-label="Presión arterial" placeholder="Ej. 128/82" style="flex:1"><button class="btn" type="button" data-a="bp">Guardar</button></div></div>
         <div class="card"><h3>Teleconsulta</h3><p class="sub" style="margin:6px 0 8px">Su médico decide si debe venir en persona.</p><button class="btn" type="button" data-a="tele">Solicitar teleconsulta</button></div>`;
     } else if (ptab === "citas") {
-      const days = ["Lun 16", "Mar 17", "Mié 18", "Jue 19"], times = ["07:20", "07:40", "08:00", "08:20", "09:00", "10:20", "11:40", "12:20"];
-      const taken = new Set(S.visits.map((v) => v.time));
+      const room = roomOfDoctor(p.doctor);
+      if (!pick.day || !S.days.find((d) => d.date === pick.day)) pick.day = S.days[0].date;
+      const times = slotsFor(pick.day, room);
+      if (pick.time && !times.includes(pick.time)) pick.time = null;
       const services = S.services.filter((s) => s.active);
-      h = `<div class="card"><div class="row between"><h3>Agendar con ${esc(doc)}</h3>${prc("PRC-AGE-01", "Agenda e identificación")}</div>
-        <label for="pReason" style="margin-top:10px">Motivo</label><input type="text" id="pReason" value="Control de hipertensión">
-        <label for="pSvc" style="margin-top:10px">Servicio</label><select id="pSvc">${services.map((s) => `<option value="${s.id}">${esc(s.name)} · ${money(s.price)}</option>`).join("")}</select>
-        <label style="margin-top:10px">Día</label><div class="slots">${days.map((d) => `<button class="slot" type="button" data-day="${d}" aria-pressed="${pick.day === d}">${d}</button>`).join("")}</div>
-        <label style="margin-top:10px">Hora (consultas de ${S.config.slot_minutes} min)</label><div class="slots">${times.map((t) => `<button class="slot" type="button" data-time="${t}" aria-pressed="${pick.time === t}" ${taken.has(t) && S.me.role !== "paciente" ? "disabled" : ""}>${t}</button>`).join("")}</div>
+      const mine = upcoming.length ? `<div class="card"><h3>Mis próximas citas</h3>${upcoming.map((v) => `<div class="li"><div><b>${when(v)}</b><div class="sub" style="font-size:12.5px">${esc(v.reason)}</div></div>${v.st === "agendado" ? `<button class="btn sm" type="button" data-cancel="${v.id}">Cancelar</button>` : stChip(v.st)}</div>`).join("")}</div>` : "";
+      h = mine + `<div class="card"><div class="row between"><h3>Agendar con ${esc(doc)}</h3>${prc("PRC-AGE-01", "Agenda e identificación")}</div>
+        <label for="pReason" style="margin-top:10px">Motivo</label><input type="text" id="pReason" value="${esc(pick.reason || "Control")}">
+        <label for="pSvc" style="margin-top:10px">Servicio</label><select id="pSvc">${services.map((s) => `<option value="${s.id}" ${pick.svc === s.id ? "selected" : ""}>${esc(s.name)} · ${money(s.price)}</option>`).join("")}</select>
+        <label style="margin-top:10px">Día</label><div class="slots">${S.days.map((d) => `<button class="slot" type="button" data-day="${d.date}" aria-pressed="${pick.day === d.date}">${d.date === S.now.date ? "Hoy" : esc(d.short)}</button>`).join("")}</div>
+        <label style="margin-top:10px">Horas libres (consultas de ${S.config.slot_minutes} min)</label>
+        <div class="slots" style="max-height:150px;overflow:auto">${times.map((t) => `<button class="slot" type="button" data-time="${t}" aria-pressed="${pick.time === t}">${t}</button>`).join("") || '<p class="sub" style="font-size:12.5px">No quedan horas libres ese día.</p>'}</div>
         <div class="rule ok" style="margin-top:12px">El precio y su copago con ARS se informan antes de confirmar (Ley 358-05).</div>
         <button class="btn pri" type="button" data-a="book" style="width:100%;margin-top:10px" ${pick.time ? "" : "disabled"}>Confirmar cita</button></div>`;
     } else if (ptab === "result") {
-      h = `<div class="card"><div class="row between"><h3>Perfil lipídico · 10 nov</h3><span class="chip ok">Revisado</span></div>
+      h = `<div class="card"><div class="row between"><h3>Perfil lipídico · ${relDate(11)}</h3><span class="chip ok">Revisado</span></div>
         <table style="margin-top:8px"><tr><th>Prueba</th><th class="num">Valor</th><th class="num">Referencia</th></tr>
         <tr><td>Colesterol total</td><td class="num">212 mg/dL</td><td class="num">&lt; 200</td></tr><tr><td>LDL</td><td class="num">138 mg/dL</td><td class="num">&lt; 130</td></tr>
         <tr><td>HDL</td><td class="num">48 mg/dL</td><td class="num">&gt; 40</td></tr><tr><td>Triglicéridos</td><td class="num">160 mg/dL</td><td class="num">&lt; 150</td></tr></table>
@@ -151,20 +190,24 @@
         <select id="drType" aria-label="Tipo de solicitud"><option>Acceso a mis datos</option><option>Rectificación</option><option>Cancelación</option><option>Oposición</option></select>
         <button class="btn" type="button" data-a="data_request" style="margin-top:8px">Enviar solicitud</button></div>`;
     }
-    const phone = `<div class="phone" role="region" aria-label="App del paciente"><div class="ph-head"><div class="row between" style="align-items:flex-start"><div><div class="sub" style="font-size:12.5px">Buenos días</div><div class="hi">${esc(p.name.split(" ")[0])}</div><div class="tagl">Cerca de ti · Humana · Rápida · Digital</div></div><img src="logo-mark.png" alt=""></div></div>
+    const phone = `<div class="phone" role="region" aria-label="App del paciente"><div class="ph-head"><div class="row between" style="align-items:flex-start"><div><div class="sub" style="font-size:12.5px">${greet()}</div><div class="hi">${esc(p.name.split(" ")[0])}</div><div class="tagl">Cerca de ti · Humana · Rápida · Digital</div></div><img src="logo-mark.png" alt=""></div></div>
       <div class="ph-body">${h}</div><div class="ph-tabs" role="tablist">${tabs.map(([k, t]) => `<button role="tab" aria-selected="${ptab === k}" data-pt="${k}" type="button">${ICON[k]}${t}</button>`).join("")}</div></div>`;
-    const side = S.me.role === "paciente" ? "" : `<div class="side card"><h2>Vista del paciente</h2><p class="sub">Como administrador ve la app de la paciente de demostración (${esc(p.name)}). Agende una cita y vaya a Recepción: aparece en la lista del día.</p></div>`;
+    const acc = S.users.find((x) => x.role === "paciente" && x.patient === p.id);
+    const side = S.me.role === "paciente" ? "" : `<div class="side card"><h2>Vista del paciente</h2>
+      <label for="vpSel">Ver la app de</label><select id="vpSel">${S.patients.map((x) => `<option value="${x.id}" ${x.id === p.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select>
+      <p class="sub" style="margin-top:10px">${acc ? `Este paciente entra con el usuario <b class="mono">${esc(acc.username)}</b>.` : "Este paciente aún no tiene acceso a la app. Créelo en Administración › Pacientes."}</p>
+      <p class="sub">Las citas que agende aquí aparecen en Recepción el día que corresponde.</p></div>`;
     return `<div class="phonewrap">${phone}${side}</div>`;
   }
 
   // ================================================================ clínica
   function vClinica() {
     const room = S.me.room || "C2";
-    const list = S.visits.filter((v) => S.me.role !== "medico" || v.room === room);
+    const list = S.visits.filter((v) => isToday(v) && v.st !== "cancelada" && (S.me.role !== "medico" || v.room === room));
     if (!sel || !list.find((v) => v.id === sel)) sel = (list.find((v) => v.st !== "atendido") || list[0] || {}).id;
     const v = visit(sel);
     const done = list.filter((x) => x.st === "atendido").length;
-    const head = `<div class="row between" style="margin-bottom:14px"><div><h1>${esc((S.rooms.find((r) => r.id === room) || {}).name || "Consultorio")} · ${esc(userName((S.rooms.find((r) => r.id === room) || {}).doctor))}</h1><div class="sub">${esc(S.config.day)}</div></div><span class="chip acc">${done} de ${list.length} atendidos</span></div>`;
+    const head = `<div class="row between" style="margin-bottom:14px"><div><h1>${esc((S.rooms.find((r) => r.id === room) || {}).name || "Consultorio")} · ${esc(userName((S.rooms.find((r) => r.id === room) || {}).doctor))}</h1><div class="sub" >${esc(cap(S.now.label))}</div></div><span class="chip acc">${done} de ${list.length} atendidos</span></div>`;
     const agenda = `<div class="card"><div class="row between"><h2>Agenda del día</h2>${prc("PRC-AGE-01", "Agenda e identificación")}</div><div class="list" style="margin-top:8px">
       ${list.map((x) => `<div class="li ${sel === x.id ? "sel" : ""}"><div><button class="link" type="button" data-sel="${x.id}">${x.time} · ${esc(pt(x.pid).name)}</button><div class="sub" style="font-size:12.5px">${esc(x.reason)}${svc(x.service).procedure ? " · procedimiento" : ""}</div></div>${stChip(x.st)}</div>`).join("") || '<p class="sub">Sin pacientes.</p>'}</div></div>`;
     let chart = '<div class="card"><p class="sub">Seleccione un paciente.</p></div>';
@@ -193,8 +236,10 @@
 
   // ================================================================ recepción
   function vRecepcion() {
-    const rows = S.visits.map((v) => {
-      const act = v.st === "agendado" ? `<button class="btn sm" type="button" data-arr="${v.id}">Registrar llegada</button>` : v.st === "atendido" && !v.paid ? `<button class="btn sm pri" type="button" data-pay="${v.id}">Cobrar</button>` : v.paid ? '<span class="chip ok">Pagado · e-CF</span>' : '<span class="sub">En atención</span>';
+    if (!recDay) recDay = S.now.date;
+    const dayList = S.visits.filter((v) => v.date === recDay);
+    const rows = dayList.map((v) => {
+      const act = v.st === "cancelada" ? '<span class="sub">—</span>' : v.st === "agendado" ? (isToday(v) ? `<button class="btn sm" type="button" data-arr="${v.id}">Registrar llegada</button>` : "") + ` <button class="btn sm" type="button" data-cancel="${v.id}">Cancelar</button>` : v.st === "atendido" && !v.paid ? `<button class="btn sm pri" type="button" data-pay="${v.id}">Cobrar</button>` : v.paid ? '<span class="chip ok">Pagado · e-CF</span>' : '<span class="sub">En atención</span>';
       return `<tr><td class="mono">${v.time}</td><td>${esc(pt(v.pid).name)}${v.source === "app" ? ' <span class="chip acc">desde la app</span>' : ""}</td><td>${esc(v.reason)}</td><td>${stChip(v.st)}</td><td>${act}</td></tr>`;
     }).join("");
     const v = payId && visit(payId);
@@ -218,9 +263,11 @@
     const claims = items.map((c) => `<div class="li"><div><b>${esc(c.id)}</b> · ${esc(c.t)}<div class="sub" style="font-size:12.5px">${esc(c.d)} · plazo ${esc(c.due)}</div></div><div class="row"><span class="chip ${c.st === "Respondida" ? "ok" : "warn"}">${esc(c.st)}</span>${c.st !== "Respondida" ? `<button class="btn sm" type="button" data-answer="${c.id}">Marcar respondida</button>` : ""}</div></div>`).join("") || '<p class="sub">Sin registros.</p>';
     const arsName = (id) => ((S.ars || []).find((a) => a.id === id) || {}).name || id;
     const arsList = (S.ars_claims || []).slice().reverse().map((c) => `<div class="li"><div><b>${esc(c.id)}</b> · ${esc(arsName(c.ars))}<div class="sub" style="font-size:12.5px">Atención ${esc(c.vid)} · aut. ${esc(c.auth)} · ${money(c.amount)}</div></div><div class="row"><span class="chip ${c.status === "Pagada" ? "ok" : c.status === "Reclamada" ? "acc" : "warn"}">${esc(c.status)}</span>${c.status !== "Pagada" ? `<button class="btn sm" type="button" data-arsnext="${c.id}">${c.status === "Por reclamar" ? "Marcar reclamada" : "Marcar pagada"}</button>` : ""}</div></div>`).join("") || '<p class="sub">Sin reclamaciones.</p>';
-    return `<div class="row between" style="margin-bottom:14px"><div><h1>Recepción y caja</h1><div class="sub">${esc(S.config.center)}</div></div>
+    return `<div class="row between" style="margin-bottom:14px"><div><h1>Recepción y caja</h1><div class="sub"><span >${esc(cap(S.now.label))}</span> · ${esc(S.config.center)}</div></div>
       <div class="row"><button class="btn" type="button" data-a="new-open">Paciente nuevo</button><button class="btn" type="button" data-a="book-open">Agendar cita</button><button class="btn" type="button" data-a="claim-open">Registrar queja</button></div></div>
-      <div class="ws2"><div class="card"><div class="row between"><h2>Pacientes de hoy</h2>${prc("PRC-AGE-02", "Llegada, identificación y precio")}</div><div class="scroll"><table><tr><th>Hora</th><th>Paciente</th><th>Motivo</th><th>Estado</th><th>Acción</th></tr>${rows}</table></div></div>
+      <div class="ws2"><div class="card"><div class="row between"><h2>Agenda del día</h2>${prc("PRC-AGE-02", "Llegada, identificación y precio")}</div>
+      <div class="row" style="margin:8px 0"><input type="date" id="recDay" value="${recDay}" aria-label="Día de la agenda" style="max-width:180px"><button class="btn sm" type="button" data-recday="${S.now.date}">Hoy</button><span class="sub" style="font-size:12.5px">${dayList.filter((v) => v.st !== "cancelada").length} citas</span></div>
+      <div class="scroll"><table><tr><th>Hora</th><th>Paciente</th><th>Motivo</th><th>Estado</th><th>Acción</th></tr>${rows || '<tr><td colspan="5" class="sub">Sin citas ese día.</td></tr>'}</table></div></div>
       <div class="grid"><div class="card">${cash}</div><div class="card"><div class="row between"><h2>Quejas y solicitudes</h2>${prc("PRC-QJA · PRC-DAT", "Ley 42-01 · DIDA para afiliados del SDSS · Ley 172-13")}</div><div class="list" style="margin-top:6px">${claims}</div></div>
       <div class="card"><div class="row between"><h2>Reclamaciones a ARS</h2>${prc("PRC-ARS-01", "Autorización, reclamación y conciliación con la ARS")}</div><div class="list" style="margin-top:6px">${arsList}</div></div></div></div>`;
   }
@@ -268,7 +315,9 @@
       h = `<form class="card" id="fCfg"><h2>Datos del centro</h2><div class="formgrid" style="margin-top:10px">
         <div><label for="cCenter">Nombre del centro</label><input type="text" id="cCenter" value="${esc(c.center)}"></div>
         <div><label for="cAddr">Dirección</label><input type="text" id="cAddr" value="${esc(c.address)}"></div>
-        <div><label for="cDay">Fecha de operación mostrada</label><input type="text" id="cDay" value="${esc(c.day)}"></div>
+        <div><label for="cOpen">Hora de apertura</label><input type="time" id="cOpen" value="${esc(c.open)}"></div>
+        <div><label for="cClose">Hora de cierre</label><input type="time" id="cClose" value="${esc(c.close)}"></div>
+        <label class="check"><input type="checkbox" id="cSat" ${(c.workdays || []).includes(5) ? "checked" : ""}> Atiende los sábados</label>
         <div><label for="cSlot">Duración de la consulta (min)</label><input type="number" id="cSlot" min="5" value="${c.slot_minutes}"></div>
         <div><label for="cCap">Capacidad semanal (consultas)</label><input type="number" id="cCap" min="1" value="${c.weekly_capacity}"></div>
         <div><label for="cGoal">Meta de ocupación (%)</label><input type="number" id="cGoal" min="1" max="100" value="${Math.round(c.occupancy_goal * 100)}"></div>
@@ -301,9 +350,10 @@
         ${S.drugs.map((d) => `<tr><td>${esc(d.name)}</td><td>${esc(d.group || "—")}</td><td><button class="btn sm" type="button" data-adm="drug-edit" data-id="${d.id}">Editar</button></td></tr>`).join("")}</table>
         <p class="note" style="margin-top:10px">Si el grupo coincide con la alergia registrada del paciente, la receta se bloquea.</p></div>`;
     } else if (atab === "pacientes") {
-      h = `<div class="card"><h2>Pacientes</h2><div class="scroll"><table style="margin-top:8px"><tr><th>Código</th><th>Nombre</th><th>Edad</th><th>Alergia</th><th>ARS</th><th>Médico</th><th>Recordatorios</th><th></th></tr>
-        ${S.patients.map((p) => `<tr><td class="mono">${p.id}</td><td>${esc(p.name)}</td><td>${p.age}</td><td>${esc(p.allergy || "—")}</td><td>${esc((arsOf(p) || {}).name || "Particular")}</td><td>${esc(userName(p.doctor))}</td><td>${yes(p.consent_reminders)}</td><td><button class="btn sm" type="button" data-adm="pat-edit" data-id="${p.id}">Editar</button></td></tr>`).join("")}</table></div>
-        <p class="sub" style="font-size:12.5px">Los pacientes nuevos se inscriben desde Recepción, con su consentimiento.</p></div>`;
+      h = `<div class="card"><h2>Pacientes</h2><div class="scroll"><table style="margin-top:8px"><tr><th>Código</th><th>Nombre</th><th>Edad</th><th>Alergia</th><th>ARS</th><th>Médico</th><th>Acceso a la app</th><th></th></tr>
+        ${S.patients.map((p) => `<tr><td class="mono">${p.id}</td><td>${esc(p.name)}</td><td>${p.age}</td><td>${esc(p.allergy || "—")}</td><td>${esc((arsOf(p) || {}).name || "Particular")}</td><td>${esc(userName(p.doctor))}</td><td>${(() => { const a = S.users.find((x) => x.role === "paciente" && x.patient === p.id); return a ? `<span class="mono">${esc(a.username)}</span> ${a.active ? "" : '<span class="chip bad">Inactivo</span>'}` : '<span class="sub">Sin acceso</span>'; })()}</td>
+        <td><button class="btn sm" type="button" data-adm="pat-edit" data-id="${p.id}">Editar</button>${(() => { const a = S.users.find((x) => x.role === "paciente" && x.patient === p.id); return a ? `<button class="btn sm" type="button" data-adm="user-pw" data-id="${a.id}">Contraseña</button>` : `<button class="btn sm" type="button" data-adm="pat-access" data-id="${p.id}">Crear acceso</button>`; })()}</td></tr>`).join("")}</table></div>
+        <p class="sub" style="font-size:12.5px">Los pacientes nuevos se inscriben desde Recepción, con su consentimiento. Cada paciente con acceso entra a la app con su propio usuario y solo ve sus datos.</p></div>`;
     } else if (atab === "bitacora") {
       h = `<div class="card"><div class="row between"><h2>Bitácora completa</h2><input type="text" id="aFilter" placeholder="Filtrar por persona, acción o código" style="max-width:320px"></div>
         <div class="scroll"><table style="margin-top:8px" id="aTable"><tr><th>Hora</th><th>Quién</th><th>Acción</th><th>Referencia</th></tr>${S.audit.slice().reverse().map((a) => `<tr><td class="mono">${esc(a[0])}</td><td>${esc(a[1])}</td><td>${esc(a[2])}</td><td class="mono">${esc(a[3])}</td></tr>`).join("")}</table></div></div>`;
@@ -318,13 +368,13 @@
   }
 
   const arsOpts = (sel) => '<option value="">Particular (sin ARS)</option>' + (S.ars || []).filter((a) => a.active || a.id === sel).map((a) => `<option value="${a.id}" ${sel === a.id ? "selected" : ""}>${esc(a.name)}</option>`).join("");
-  function adminForm(kind, id) {
+  function adminForm(kind, id, pre) {
     edit = { kind, id };
     const roleOpts = (sel) => Object.entries(S.roles).map(([k, v]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${v}</option>`).join("");
     const medOpts = (sel) => '<option value="">— Sin asignar —</option>' + S.users.filter((u) => u.role === "medico").map((u) => `<option value="${u.id}" ${sel === u.id ? "selected" : ""}>${esc(u.name)}</option>`).join("");
     const btns = `<div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" data-save="${kind}">Guardar</button></div>`;
     if (kind === "user") {
-      const u = S.users.find((x) => x.id === id) || { role: "recepcion", active: true };
+      const u = S.users.find((x) => x.id === id) || pre || { role: "recepcion", active: true };
       modal(`<h2 id="mTitle">${id ? "Editar usuario" : "Nuevo usuario"}</h2><div class="grid" style="gap:10px;margin-top:8px">
         <div><label for="fU">Usuario</label><input type="text" id="fU" value="${esc(u.username || "")}"></div>
         <div><label for="fN">Nombre completo</label><input type="text" id="fN" value="${esc(u.name || "")}"></div>
@@ -387,13 +437,16 @@
     if (kind === "pat") return act("patient_save", { id, name: val("fN"), ars: val("fArs"), nss: val("fNss"), doc: val("fDoc"), age: val("fAge"), allergy: val("fAl"), chronic: val("fCh"), doctor: val("fD"), consent_reminders: chk("fRem"), consent_promo: chk("fPro") }, { close: true });
   }
 
+  function keepPick() { if ($("#pReason")) pick.reason = val("pReason"); if ($("#pSvc")) pick.svc = val("pSvc"); }
   // ================================================================ eventos
   $("#main").addEventListener("click", async (e) => {
     const t = e.target.closest("button,[data-pt]"); if (!t || !S) return;
     const d = t.dataset;
     if (d.pt) { ptab = d.pt; render(); return; }
-    if (d.day) { pick.day = d.day; render(); return; }
-    if (d.time) { pick.time = d.time; render(); return; }
+    if (d.day) { keepPick(); pick.day = d.day; pick.time = null; render(); return; }
+    if (d.time) { keepPick(); pick.time = d.time; render(); return; }
+    if (d.cancel) return act("cancel", { vid: d.cancel });
+    if (d.recday) { recDay = d.recday; render(); return; }
     if (d.sel) { sel = d.sel; await act("open", { vid: sel }, { silent: true }); return; }
     if (d.atab) { atab = d.atab; render(); return; }
     if (d.arr) return act("arrive", { vid: d.arr });
@@ -403,6 +456,8 @@
     if (d.adm) {
       const map = { "user-new": ["user"], "user-edit": ["user", d.id], "user-pw": ["pw", d.id], "ars-new": ["ars"], "ars-edit": ["ars", d.id], "room-new": ["room"], "room-edit": ["room", d.id], "svc-new": ["svc"], "svc-edit": ["svc", d.id], "cie-new": ["cie"], "cie-edit": ["cie", d.id], "drug-new": ["drug"], "drug-edit": ["drug", d.id], "pat-edit": ["pat", d.id] };
       if (map[d.adm]) return adminForm(...map[d.adm]);
+      if (d.adm === "pat-access") { const p = pt(d.id); const base = p.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ");
+        return adminForm("user", null, { role: "paciente", active: true, patient: p.id, name: p.name, username: base[0] + "." + (base[base.length - 1] || "") }); }
       if (d.adm === "user-toggle") return act("user_toggle", { id: d.id });
       if (d.adm === "export") { const r = await Api.exportData(); toast(r.ok ? r.message : r.error, !r.ok); return; }
       if (d.adm === "reset") return modal(`<h2 id="mTitle">Restaurar datos de demostración</h2><p>Se reemplazan todos los datos por los de demostración y se cierra la sesión.${Api.mode === "server" ? " Antes se guarda una copia de seguridad en la base de datos." : ""}</p><div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" id="doReset">Restaurar</button></div>`);
@@ -412,7 +467,7 @@
     if (a === "bp") return act("bp", { value: val("bpIn"), pid: myPatientId() });
     if (a === "tele") return act("tele", {});
     if (a === "data_request") return act("data_request", { kind: val("drType"), pid: myPatientId() });
-    if (a === "book") { const ok = await act("book", { pid: myPatientId(), time: pick.time, day: pick.day, reason: val("pReason"), service: val("pSvc") }); if (ok) { pick.time = null; ptab = "inicio"; render(); } return; }
+    if (a === "book") { const ok = await act("book", { pid: myPatientId(), time: pick.time, date: pick.day, reason: val("pReason"), service: val("pSvc") }); if (ok) { pick.time = null; pick.reason = null; ptab = "inicio"; render(); } return; }
     if (a === "lab") return act("lab", { vid: sel });
     if (a === "vig") return act("vig", { vid: sel });
     if (a === "sign") return act("sign", { vid: sel, note: val("note"), dx: val("dx") });
@@ -436,13 +491,20 @@
       <div><label for="nAge">Edad</label><input type="number" id="nAge" value="30"></div><div><label for="nDocId">Cédula</label><input type="text" id="nDocId" placeholder="000-0000000-0"></div>
       <div><label for="nArs">ARS</label><select id="nArs">${arsOpts("")}</select></div><div><label for="nNss">NSS</label><input type="text" id="nNss"></div><div><label for="nAl">Alergia</label><input type="text" id="nAl"></div>
       <div><label for="nDoc">Médico de cabecera</label><select id="nDoc">${S.users.filter((u) => u.role === "medico" && u.active).map((u) => `<option value="${u.id}">${esc(u.name)}</option>`).join("")}</select></div>
-      <div><label for="nTime">Atender hoy a las (opcional)</label><input type="text" id="nTime" placeholder="10:20"></div>
+      <div><label for="nTime">Atender hoy a las</label><select id="nTime"></select></div>
+      <div><label for="nUser">Usuario para la app (opcional)</label><input type="text" id="nUser" placeholder="nombre.apellido" autocomplete="off"></div>
+      <div><label for="nPass">Contraseña inicial de la app</label><input type="password" id="nPass" autocomplete="new-password"></div>
       <label class="check"><input type="checkbox" id="nCons"> Firmó el consentimiento para tratar sus datos de salud</label><label class="check"><input type="checkbox" id="nRem" checked> Acepta recordatorios</label></div>
-      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" id="newSave">Inscribir</button></div>`);
-    if (a === "book-open") return modal(`<h2 id="mTitle">Agendar cita</h2><label for="bP">Paciente</label><select id="bP">${S.patients.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
+      <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" id="newSave">Inscribir</button></div>`) || fillNewTimes();
+    if (a === "book-open") {
+      modal(`<h2 id="mTitle">Agendar cita</h2><label for="bP">Paciente</label><select id="bP">${S.patients.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("")}</select>
       <label for="bS" style="margin-top:8px">Servicio</label><select id="bS">${S.services.filter((s) => s.active).map((s) => `<option value="${s.id}">${esc(s.name)} · ${money(s.price)}</option>`).join("")}</select>
-      <label for="bT" style="margin-top:8px">Hora</label><input type="text" id="bT" value="11:40"><label for="bR" style="margin-top:8px">Motivo</label><input type="text" id="bR" value="Consulta">
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-top:8px"><div><label for="bD">Día</label><select id="bD">${S.days.map((d) => `<option value="${d.date}">${d.date === S.now.date ? "Hoy" : esc(d.short)}</option>`).join("")}</select></div>
+      <div><label for="bT">Hora libre</label><select id="bT"></select></div></div>
+      <label for="bR" style="margin-top:8px">Motivo</label><input type="text" id="bR" value="Consulta">
       <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" id="bookSave">Agendar</button></div>`);
+      fillBookTimes(); return;
+    }
     if (a === "claim-open") return modal(`<h2 id="mTitle">Registrar queja o sugerencia</h2><label for="qType">Tipo</label><select id="qType"><option>Queja</option><option>Sugerencia</option><option>Reclamo de cobro</option></select>
       <label for="qTxt" style="margin-top:8px">Descripción</label><textarea id="qTxt"></textarea>
       <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" type="button" data-close>Cancelar</button><button class="btn pri" type="button" id="qSave">Registrar</button></div>`);
@@ -456,26 +518,37 @@
     if (t.id === "consSave") return act("consent", { vid: sel, confirmed: chk("cOk") }, opt);
     if (t.id === "rxSave") return act("rx", { vid: sel, drug: val("rxD") }, opt);
     if (t.id === "refSave") return act("ref", { vid: sel, kind: val("rfT") }, opt);
-    if (t.id === "newSave") return act("new_patient", { name: val("nName"), age: val("nAge"), doc: val("nDocId"), ars: val("nArs"), nss: val("nNss"), allergy: val("nAl"), doctor: val("nDoc"), time: val("nTime"), consent_data: chk("nCons"), consent_reminders: chk("nRem") }, opt);
-    if (t.id === "bookSave") return act("book", { pid: val("bP"), service: val("bS"), time: val("bT"), reason: val("bR"), day: "hoy" }, opt);
+    if (t.id === "newSave") return act("new_patient", { username: val("nUser"), password: val("nPass"), name: val("nName"), age: val("nAge"), doc: val("nDocId"), ars: val("nArs"), nss: val("nNss"), allergy: val("nAl"), doctor: val("nDoc"), time: val("nTime"), consent_data: chk("nCons"), consent_reminders: chk("nRem") }, opt);
+    if (t.id === "bookSave") { recDay = val("bD"); return act("book", { pid: val("bP"), service: val("bS"), date: val("bD"), time: val("bT"), reason: val("bR") }, opt); }
     if (t.id === "qSave") return act("claim", { type: val("qType"), text: val("qTxt") }, opt);
     if (t.id === "doReset") { const r = await Api.reset(); closeModal(); toast(r.ok ? r.message : r.error, !r.ok); if (r.ok) showLogin(); }
   });
 
   $("#main").addEventListener("submit", (e) => {
     if (e.target.id !== "fCfg") return; e.preventDefault();
-    act("cfg", { center: val("cCenter"), address: val("cAddr"), day: val("cDay"), slot_minutes: val("cSlot"), weekly_capacity: val("cCap"), occupancy_goal: Number(val("cGoal")) / 100, itbis_rate: Number(val("cIva")) / 100, itbis_exempt: chk("cIvaInc") });
+    act("cfg", { center: val("cCenter"), address: val("cAddr"), open: val("cOpen"), close: val("cClose"), saturday: chk("cSat"), slot_minutes: val("cSlot"), weekly_capacity: val("cCap"), occupancy_goal: Number(val("cGoal")) / 100, itbis_rate: Number(val("cIva")) / 100, itbis_exempt: chk("cIvaInc") });
   });
   $("#main").addEventListener("input", (e) => {
     if (e.target.id !== "aFilter") return; const q = e.target.value.toLowerCase();
     document.querySelectorAll("#aTable tr").forEach((tr, i) => { if (i) tr.hidden = !tr.textContent.toLowerCase().includes(q); });
   });
   $("#main").addEventListener("change", async (e) => {
+    if (e.target.id === "vpSel") { viewPid = e.target.value; pick.time = null; render(); return; }
+    if (e.target.id === "recDay") { recDay = e.target.value || S.now.date; render(); return; }
     if (e.target.id !== "impFile" || !e.target.files[0]) return;
     try { const obj = JSON.parse(await e.target.files[0].text()); const r = await Api.importData(obj); toast(r.ok ? r.message : r.error, !r.ok); if (r.ok) showLogin(); }
     catch (err) { toast("El archivo no es un JSON válido.", true); }
   });
 
+  // ================================================================ reloj
+  function tick() {
+    const el = $("#clock"), d = new Date();
+    if (el) el.textContent = d.toLocaleDateString("es-DO", { weekday: "short", day: "numeric", month: "short" }) + " · " + d.toLocaleTimeString("es-DO", { hour: "2-digit", minute: "2-digit" });
+    if (!S) return;
+    const z = (n) => String(n).padStart(2, "0"), today = `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}`;
+    if (today !== S.now.date && $("#modal").hidden) Api.state().then((r) => { if (r.ok) { S = r.state; recDay = null; render(); } });
+  }
+  setInterval(tick, 30000);
   // ================================================================ arranque
   (async function boot() {
     try {
@@ -483,6 +556,7 @@
     } catch (err) { $("#loadMsg").textContent = "No se pudo iniciar: " + err.message; return; }
     if (Api.mode === "browser") { const mb = $("#modebar"); mb.hidden = false; mb.textContent = "Demostración en el navegador: el motor Python corre aquí mismo y los datos se guardan solo en este navegador."; }
     const r = await Api.state();
+    tick();
     if (r.ok) { S = r.state; start(); } else showLogin();
   })();
 })();

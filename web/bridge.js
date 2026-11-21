@@ -42,22 +42,28 @@
     sset: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) { /* nada */ } },
     sdel: (k) => { try { sessionStorage.removeItem(k); } catch (e) { /* nada */ } },
   };
+  // Hora local del visitante (Pyodide trabaja en UTC)
+  const localIso = () => { const d = new Date(), z = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}`; };
   let memState = null;
   const raw = () => memState;
   const keep = (r) => { memState = r; store.set(KEY, r); };
 
   const GLUE = `
 import json
+from hhsalud import engine as _eng
 from hhsalud.engine import Engine, ActionError
 from hhsalud.seed import seed_state, DEMO_PASSWORDS
 
-def boot(raw):
-    s = json.loads(raw) if raw else seed_state()
+def boot(raw, now_iso):
+    _eng.set_clock(now_iso)
+    s, _ = _eng.upgrade(json.loads(raw) if raw else None, seed_state)
     e = Engine(s)
     e.ensure_passwords(DEMO_PASSWORDS)
     return json.dumps(e.s)
 
-def call(raw, uid, op, payload):
+def call(raw, uid, op, payload, now_iso):
+    _eng.set_clock(now_iso)
     e = Engine(json.loads(raw))
     p = json.loads(payload or "{}")
     try:
@@ -91,17 +97,17 @@ def call(raw, uid, op, payload):
     py = await window.loadPyodide({ indexURL: PYODIDE });
     py.FS.mkdirTree("/home/pyodide/hhsalud");
     for (const f of ["__init__.py", "engine.py", "seed.py"]) {
-      const r = await fetch("py/" + f);
+      const r = await fetch("py/" + f, { cache: "no-cache" });
       if (!r.ok) throw new Error("Falta py/" + f);
       py.FS.writeFile("/home/pyodide/hhsalud/" + f, await r.text());
     }
     py.runPython("import sys; sys.path.insert(0, '/home/pyodide')");
     py.runPython(GLUE);
     progress("Preparando los datos de demostración…");
-    keep(py.globals.get("boot")(store.get(KEY, null)));
+    keep(py.globals.get("boot")(store.get(KEY, null), localIso()));
   }
   function pcall(op, payload) {
-    const out = JSON.parse(py.globals.get("call")(raw(), store.sget(SKEY) || "", op, JSON.stringify(payload || {})));
+    const out = JSON.parse(py.globals.get("call")(raw(), store.sget(SKEY) || "", op, JSON.stringify(payload || {}), localIso()));
     if (out.raw) keep(out.raw);
     return out;
   }
@@ -119,10 +125,10 @@ def call(raw, uid, op, payload):
     importData: async (obj) => {
       if (!obj || !obj.config || !obj.users || !obj.patients || !obj.visits) return { ok: false, error: "El archivo no es una copia válida de H&H Salud Lab." };
       if (!obj.users.some((x) => x.role === "admin" && x.active)) return { ok: false, error: "La copia debe incluir al menos un administrador activo." };
-      keep(py.globals.get("boot")(JSON.stringify(obj))); store.sdel(SKEY);
+      keep(py.globals.get("boot")(JSON.stringify(obj), localIso())); store.sdel(SKEY);
       return { ok: true, message: "Datos importados. Vuelva a ingresar." };
     },
-    reset: async () => { store.del(KEY); keep(py.globals.get("boot")(null)); store.sdel(SKEY); return { ok: true, message: "Datos de demostración restaurados. Vuelva a ingresar." }; },
+    reset: async () => { store.del(KEY); keep(py.globals.get("boot")(null, localIso())); store.sdel(SKEY); return { ok: true, message: "Datos de demostración restaurados. Vuelva a ingresar." }; },
   };
 
   function download(blob, name) {

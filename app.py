@@ -13,7 +13,7 @@ from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory, session, Response
 
-from hhsalud.engine import Engine, ActionError
+from hhsalud.engine import Engine, ActionError, upgrade
 from hhsalud.seed import seed_state, DEMO_PASSWORDS
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -44,7 +44,13 @@ def load():
     with db() as con:
         row = con.execute("SELECT data FROM state WHERE id = 1").fetchone()
     if row:
-        return json.loads(row[0])
+        s, replaced = upgrade(json.loads(row[0]), seed_state)
+        if not replaced:
+            return s
+        e = Engine(s)
+        e.ensure_passwords(DEMO_PASSWORDS)
+        save(e.s, backup_reason="actualización a la versión con agenda real")
+        return e.s
     s = fresh()
     save(s)
     return s

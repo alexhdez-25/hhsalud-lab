@@ -1,13 +1,41 @@
-"""Datos iniciales de la versión lab de H&H Salud. Todos los nombres, montos y porcentajes son ficticios."""
+"""Datos iniciales de la versión lab de H&H Salud. Todos los nombres, montos y porcentajes son ficticios.
+
+Las fechas se calculan desde el día en que se crean los datos, para que la agenda funcione con la fecha real.
+"""
+import datetime as _dt
+
+MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 
-def seed_state():
+def _next_workday(d, n=1):
+    while n > 0:
+        d += _dt.timedelta(days=1)
+        if d.weekday() < 6:
+            n -= 1
+    return d
+
+
+def _bd(d, n):
+    while n > 0:
+        d += _dt.timedelta(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def seed_state(today=None):
+    today = today or _dt.date.today()
+    T = today.isoformat()
+    ago = lambda n: f"{(today - _dt.timedelta(days=n)).day} {MESES[(today - _dt.timedelta(days=n)).month - 1]}"
+    d1, d2 = _next_workday(today, 1).isoformat(), _next_workday(today, 2).isoformat()
     return {
-        "version": 1,
+        "version": 2,
         "config": {
             "center": "Centro H&H Salud · Santo Domingo Este",
             "address": "Ensanche Ozama, Santo Domingo Este (ficticia)",
-            "day": "lunes 23 de noviembre de 2026",
+            "open": "07:00",
+            "close": "19:00",
+            "workdays": [0, 1, 2, 3, 4, 5],
             "currency": "DOP",
             "slot_minutes": 12,
             "itbis_rate": 0.18,
@@ -22,6 +50,10 @@ def seed_state():
             {"id": "U-ENF", "username": "enfermeria", "name": "Lic. Mildred Rosario", "role": "enfermeria", "active": True, "pw": None},
             {"id": "U-REC", "username": "recepcion", "name": "Yanelis Báez", "role": "recepcion", "active": True, "pw": None},
             {"id": "U-PAC", "username": "paciente", "name": "Carmen Altagracia Reyes", "role": "paciente", "active": True, "pw": None, "patient": "P-2210"},
+            {"id": "U-PA2", "username": "juan.mejia", "name": "Juan Bautista Mejía", "role": "paciente", "active": True, "pw": None, "patient": "P-1874"},
+            {"id": "U-PA3", "username": "rosanna.feliz", "name": "Rosanna Féliz", "role": "paciente", "active": True, "pw": None, "patient": "P-2305"},
+            {"id": "U-PA4", "username": "ramon.guzman", "name": "Ramón Antonio Guzmán", "role": "paciente", "active": True, "pw": None, "patient": "P-1559"},
+            {"id": "U-PA5", "username": "nicole.tutor", "name": "Tutora de Nicole Pérez Santana", "role": "paciente", "active": True, "pw": None, "patient": "P-2388"},
         ],
         "rooms": [
             {"id": "C1", "name": "Consultorio 1", "doctor": None, "active": True},
@@ -58,7 +90,7 @@ def seed_state():
         ],
         "patients": [
             {"id": "P-2210", "name": "Carmen Altagracia Reyes", "age": 41, "doc": "001-…-7", "ars": "ARS-1", "nss": "…4471", "allergy": "Penicilina", "chronic": ["Hipertensión"], "doctor": "U-MED",
-             "consent_data": True, "consent_reminders": True, "consent_promo": False, "bp": [["21 nov", "136/88"], ["19 nov", "132/86"], ["17 nov", "130/84"]]},
+             "consent_data": True, "consent_reminders": True, "consent_promo": False, "bp": [[ago(2), "136/88"], [ago(4), "132/86"], [ago(6), "130/84"]]},
             {"id": "P-1874", "name": "Juan Bautista Mejía", "age": 63, "doc": "402-…-1", "ars": "ARS-2", "nss": "…1190", "allergy": "", "chronic": ["Diabetes tipo 2"], "doctor": "U-MED",
              "consent_data": True, "consent_reminders": True, "consent_promo": False, "bp": []},
             {"id": "P-2305", "name": "Rosanna Féliz", "age": 26, "doc": "223-…-5", "ars": "", "nss": "", "allergy": "", "chronic": [], "doctor": "U-MED",
@@ -69,27 +101,31 @@ def seed_state():
              "consent_data": True, "consent_reminders": True, "consent_promo": False, "bp": []},
         ],
         "visits": [
-            {"id": "V1", "pid": "P-1874", "time": "07:24", "reason": "Control de diabetes", "service": "S-CON", "st": "atendido", "paid": True,
+            {"id": "V1", "date": T, "pid": "P-1874", "time": "07:24", "reason": "Control de diabetes", "service": "S-CON", "st": "atendido", "paid": True,
              "ecf": "e-CF tipo 32 · Factura de consumo electrónica · Ambiente: pruebas\ne-NCF: E320000000214\nCliente: Juan Bautista Mejía\nConsulta de medicina general  RD$1,500.00\nCobertura ARS privada A (aut. 55120871)  RD$1,050.00\nCopago pagado por el paciente  RD$450.00\nServicio de salud exento de ITBIS",
              "ars_amount": 1050.0, "copay": 450.0, "auth": "55120871",
              "vitals": {"pa": "134/84", "fc": 78, "t": "36.6", "sat": 97, "peso": "84.0"}, "dx": "E11.9",
              "note": "Glucosa capilar 152 mg/dL. Adherente a metformina. Se refuerza plan nutricional.", "consent": False, "room": "C2", "source": "recepcion"},
-            {"id": "V2", "pid": "P-1559", "time": "07:48", "reason": "Fiebre y dolor de cuerpo", "service": "S-CON", "st": "en espera", "paid": False, "ecf": None,
+            {"id": "V2", "date": T, "pid": "P-1559", "time": "07:48", "reason": "Fiebre y dolor de cuerpo", "service": "S-CON", "st": "en espera", "paid": False, "ecf": None,
              "vitals": None, "dx": None, "note": "", "consent": False, "room": "C2", "source": "recepcion"},
-            {"id": "V3", "pid": "P-2305", "time": "08:12", "reason": "Dolor de garganta", "service": "S-CON", "st": "triaje", "paid": False, "ecf": None,
+            {"id": "V3", "date": T, "pid": "P-2305", "time": "08:12", "reason": "Dolor de garganta", "service": "S-CON", "st": "triaje", "paid": False, "ecf": None,
              "vitals": {"pa": "110/70", "fc": 90, "t": "38.1", "sat": 98, "peso": "60.2"}, "dx": None, "note": "", "consent": False, "room": "C2", "source": "app"},
-            {"id": "V4", "pid": "P-2388", "time": "08:36", "reason": "Lavado de oído", "service": "S-OID", "st": "agendado", "paid": False, "ecf": None,
+            {"id": "V4", "date": T, "pid": "P-2388", "time": "08:36", "reason": "Lavado de oído", "service": "S-OID", "st": "agendado", "paid": False, "ecf": None,
+             "vitals": None, "dx": None, "note": "", "consent": False, "room": "C2", "source": "recepcion"},
+            {"id": "V5", "date": d1, "pid": "P-2210", "time": "10:00", "reason": "Control de hipertensión", "service": "S-CON", "st": "agendado", "paid": False, "ecf": None,
+             "vitals": None, "dx": None, "note": "", "consent": False, "room": "C2", "source": "app"},
+            {"id": "V6", "date": d2, "pid": "P-1874", "time": "08:00", "reason": "Control de diabetes", "service": "S-CON", "st": "agendado", "paid": False, "ecf": None,
              "vitals": None, "dx": None, "note": "", "consent": False, "room": "C2", "source": "recepcion"},
         ],
         "ars_claims": [{"id": "RA-0214", "vid": "V1", "ars": "ARS-2", "amount": 1050.0, "auth": "55120871", "status": "Por reclamar"}],
-        "claims": [{"id": "Q-018", "type": "Queja", "text": "Espera de 35 minutos sin aviso", "due": "5 días hábiles (plazo interno)", "status": "En análisis"}],
+        "claims": [{"id": "Q-018", "type": "Queja", "text": "Espera de 35 minutos sin aviso", "due": _bd(today, 5).strftime("%d/%m/%Y") + " (5 días hábiles)", "status": "En análisis"}],
         "data_requests": [],
         "notifications": [],
         "audit": [
-            ["07:24:10", "Lic. Mildred Rosario", "registró signos vitales", "V1"],
-            ["07:31:02", "Dra. Yokasta Almonte", "abrió el expediente", "P-1874"],
-            ["07:38:44", "Dra. Yokasta Almonte", "firmó la nota de consulta", "V1"],
-            ["07:40:01", "Yanelis Báez", "emitió e-CF y registró reclamación a la ARS", "V1"],
+            [today.strftime("%d/%m") + " 07:24:10", "Lic. Mildred Rosario", "registró signos vitales", "V1"],
+            [today.strftime("%d/%m") + " 07:31:02", "Dra. Yokasta Almonte", "abrió el expediente", "P-1874"],
+            [today.strftime("%d/%m") + " 07:38:44", "Dra. Yokasta Almonte", "firmó la nota de consulta", "V1"],
+            [today.strftime("%d/%m") + " 07:40:01", "Yanelis Báez", "emitió e-CF y registró reclamación a la ARS", "V1"],
         ],
         "ecf_count": 214,
         "week_cons": [88, 176, 251, 318, 389, 441, 486, 529],
@@ -98,11 +134,12 @@ def seed_state():
             {"name": "Centro Santiago de los Caballeros", "status": "En habilitación del MISPAS", "tone": "warn", "match": 100, "detail": "Segundo centro de la red"},
             {"name": "Expansión Caribe", "status": "Evaluación de mercado", "tone": "acc", "match": 100, "detail": "Modelo replicable fuera de RD"},
         ],
-        "seq": {"visit": 4, "patient": 2400, "claim": 18, "datareq": 0, "user": 0, "notif": 0, "arsclaim": 214},
+        "seq": {"visit": 6, "patient": 2400, "claim": 18, "datareq": 0, "user": 0, "notif": 0, "arsclaim": 214},
     }
 
 
 DEMO_PASSWORDS = {
     "admin": "admin123", "direccion": "demo123", "medico": "demo123",
     "enfermeria": "demo123", "recepcion": "demo123", "paciente": "demo123",
+    "juan.mejia": "demo123", "rosanna.feliz": "demo123", "ramon.guzman": "demo123", "nicole.tutor": "demo123",
 }

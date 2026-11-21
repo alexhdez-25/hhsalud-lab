@@ -170,3 +170,5 @@ h1,h2,h3{font-weight:600}
 .modebar{background:#E2F6EE;color:var(--ok)}
 .vital{background:var(--tint);border:1px solid var(--line)}
 .ph-head .row{flex-wrap:nowrap}
+.clock{font-family:var(--f-m);font-size:12px;color:var(--muted);background:var(--tint);border:1px solid var(--line);border-radius:999px;padding:4px 10px;white-space:nowrap;text-transform:capitalize}
+input[type="date"],input[type="time"]{font:inherit}
