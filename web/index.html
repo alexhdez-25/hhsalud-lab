@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es-DO">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H&H Salud Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="icon" href="logo-mark.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="bar"></div>
+<header class="top">
+  <div class="brand"><img src="logo-mark.png" alt=""><span class="nm">H&amp;H Salud<span class="tag">Cerca de ti, en el Caribe</span></span> <span class="lab">Versión lab · datos ficticios</span></div>
+  <nav class="roles" aria-label="Vistas" id="nav" hidden></nav>
+  <div class="tools" id="tools" hidden>
+    <label class="check"><input type="checkbox" id="tgPrc"> Ver procesos</label>
+    <div class="userbox"><div class="who"><b id="meName"></b><small id="meRole"></small></div><button class="btn sm" type="button" id="btnOut">Salir</button></div>
+  </div>
+</header>
+<div class="modebar" id="modebar" hidden></div>
+<main id="main"><div class="loading" id="loading"><div><h2>H&H Salud Lab</h2><p id="loadMsg">Iniciando…</p></div></div></main>
+<div class="modal" id="modal" hidden><div class="card" role="dialog" aria-modal="true" aria-labelledby="mTitle"><div id="mBody"></div></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script src="bridge.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
